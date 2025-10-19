@@ -273,6 +273,11 @@ async function searchYouTube(query) {
 
 async function getYouTubeInfo(url) {
   try {
+    // Validate URL format
+    if (!url || !url.includes('youtube.com') && !url.includes('youtu.be')) {
+      throw new Error('Invalid YouTube URL');
+    }
+
     const info = await ytdl.getInfo(url);
     return {
       title: info.videoDetails.title,
@@ -293,11 +298,18 @@ async function playSong(guild, song) {
   try {
     queue.isPlaying = true;
 
-    // Use play-dl as primary method (more reliable)
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type
-    });
+    // Try play-dl first, fallback to ytdl-core
+    let resource;
+    try {
+      const streamInfo = await play.stream(song.url);
+      resource = createAudioResource(streamInfo.stream, {
+        inputType: streamInfo.type
+      });
+    } catch (playDlError) {
+      console.log('play-dl failed, trying ytdl-core...');
+      const stream = ytdl(song.url, ytdlOptions);
+      resource = createAudioResource(stream);
+    }
 
     queue.player.play(resource);
 
