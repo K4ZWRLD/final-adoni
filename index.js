@@ -4,12 +4,7 @@ const ytdl = require('@distube/ytdl-core');
 const play = require('play-dl');
 
 // YouTube cookies for bypassing restrictions (optional but helps)
-const ytdlOptions = {
-  filter: 'audioonly',
-  quality: 'highestaudio',
-  highWaterMark: 1 << 25,
-  dlChunkSize: 0
-};
+const ffmpegPath = 'ffmpeg';
 const { google } = require('googleapis');
 
 const client = new Client({
@@ -278,12 +273,15 @@ async function getYouTubeInfo(url) {
       throw new Error('Invalid YouTube URL');
     }
 
-    const info = await ytdl.getInfo(url);
+    // Use yt-dlp to get video info
+    const { stdout } = await execAsync(`yt-dlp --dump-json "${url}"`);
+    const info = JSON.parse(stdout);
+
     return {
-      title: info.videoDetails.title,
-      url: info.videoDetails.video_url,
-      duration: formatDuration(info.videoDetails.lengthSeconds),
-      thumbnail: info.videoDetails.thumbnails[0].url
+      title: info.title,
+      url: url,
+      duration: formatDuration(info.duration || 0),
+      thumbnail: info.thumbnail || info.thumbnails?.[0]?.url || ''
     };
   } catch (error) {
     console.error('YouTube info error:', error);
@@ -298,18 +296,15 @@ async function playSong(guild, song) {
   try {
     queue.isPlaying = true;
 
-    // Try play-dl first, fallback to ytdl-core
-    let resource;
-    try {
-      const streamInfo = await play.stream(song.url);
-      resource = createAudioResource(streamInfo.stream, {
-        inputType: streamInfo.type
-      });
-    } catch (playDlError) {
-      console.log('play-dl failed, trying ytdl-core...');
-      const stream = ytdl(song.url, ytdlOptions);
-      resource = createAudioResource(stream);
-    }
+    // Use yt-dlp to get stream URL
+    const { stdout } = await execAsync(`yt-dlp -f bestaudio -g "${song.url}"`);
+    const streamUrl = stdout.trim();
+
+    // Create audio resource from the stream URL
+    const resource = createAudioResource(streamUrl, {
+      inputType: StreamType.Arbitrary,
+      inlineVolume: true
+    });
 
     queue.player.play(resource);
 
