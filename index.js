@@ -1,11 +1,27 @@
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
-const ytdl = require('@distube/ytdl-core');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
 const play = require('play-dl');
-
-// YouTube cookies for bypassing restrictions (optional but helps)
-const ffmpegPath = 'ffmpeg';
 const { google } = require('googleapis');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
+const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.send('Discord Music Bot is running!');
+});
+
+app.get('/callback', (req, res) => {
+  res.send('Spotify callback endpoint');
+});
+
+app.listen(PORT, () => {
+  console.log(`Health check server running on port ${PORT}`);
+});
 
 const client = new Client({
   intents: [
