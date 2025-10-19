@@ -324,14 +324,17 @@ async function getYouTubeInfo(url) {
       return null;
     }
 
+    // Return the full info object along with extracted details
+    // This is important because play.stream() might need it
     const songInfo = {
       title: video.title || 'Unknown',
-      url: video.url || url, // Fallback to the original URL if video.url doesn't exist
+      url: video.url,
       duration: formatDuration(video.durationInSec),
-      thumbnail: video.thumbnails && video.thumbnails[0] ? video.thumbnails[0].url : ''
+      thumbnail: video.thumbnails && video.thumbnails[0] ? video.thumbnails[0].url : '',
+      videoInfo: info // Store the full info object for streaming
     };
 
-    console.log('Returning songInfo:', JSON.stringify(songInfo, null, 2));
+    console.log('Returning songInfo:', JSON.stringify({ ...songInfo, videoInfo: 'object' }, null, 2));
     return songInfo;
   } catch (error) {
     console.error('YouTube info error:', error);
@@ -377,11 +380,16 @@ async function playSong(guild, song) {
 
     console.log('Attempting to stream from URL:', song.url);
 
-    // Use play-dl to stream audio
-    const stream = await play.stream(song.url);
+    // Use play-dl to stream audio - must use the URL directly with stream method
+    // play-dl.stream() expects either a YouTube URL or Spotify track
+    const stream = await play.stream(song.url, {
+      quality: 2 // Use quality 2 for better audio
+    });
+
+    console.log('Stream created:', stream ? 'success' : 'failed');
 
     if (!stream || !stream.stream) {
-      throw new Error('Failed to create stream');
+      throw new Error('Failed to create stream from URL: ' + song.url);
     }
 
     const resource = createAudioResource(stream.stream, {
@@ -389,6 +397,7 @@ async function playSong(guild, song) {
     });
 
     queue.player.play(resource);
+    console.log('Audio resource created and playing');
 
     const embed = new EmbedBuilder()
       .setColor('#00ff00')
@@ -405,6 +414,7 @@ async function playSong(guild, song) {
     }
   } catch (error) {
     console.error('Play song error:', error);
+    console.error('Error stack:', error.stack);
     queue.songs.shift();
     if (queue.songs.length > 0) {
       playSong(guild, queue.songs[0]);
