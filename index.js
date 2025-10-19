@@ -1,24 +1,15 @@
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Simple health check endpoint
-app.get('/', (req, res) => {
-  res.send('Discord Music Bot is running!');
-});
-
-app.get('/callback', (req, res) => {
-  res.send('Spotify callback endpoint');
-});
-
-app.listen(PORT, () => {
-  console.log(`Health check server running on port ${PORT}`);
-});
-
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const ytdl = require('@distube/ytdl-core');
 const play = require('play-dl');
+
+// YouTube cookies for bypassing restrictions (optional but helps)
+const ytdlOptions = {
+  filter: 'audioonly',
+  quality: 'highestaudio',
+  highWaterMark: 1 << 25,
+  dlChunkSize: 0
+};
 const { google } = require('googleapis');
 
 const client = new Client({
@@ -302,13 +293,12 @@ async function playSong(guild, song) {
   try {
     queue.isPlaying = true;
 
-    const stream = ytdl(song.url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-      highWaterMark: 1 << 25
+    // Use play-dl as primary method (more reliable)
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type
     });
 
-    const resource = createAudioResource(stream);
     queue.player.play(resource);
 
     const embed = new EmbedBuilder()
