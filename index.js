@@ -1,10 +1,10 @@
-const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const play = require('play-dl');
 const express = require('express');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -31,14 +31,16 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 // Initialize play-dl for Spotify support
-play.setToken({
-  spotify: {
-    client_id: process.env.SPOTIFY_CLIENT_ID,
-    client_secret: process.env.SPOTIFY_CLIENT_SECRET,
-    refresh_token: process.env.SPOTIFY_REFRESH_TOKEN,
-    market: 'US'
-  }
-});
+if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+  play.setToken({
+    spotify: {
+      client_id: process.env.SPOTIFY_CLIENT_ID,
+      client_secret: process.env.SPOTIFY_CLIENT_SECRET,
+      refresh_token: process.env.SPOTIFY_REFRESH_TOKEN,
+      market: 'US'
+    }
+  });
+}
 
 // Queue system
 const queues = new Map();
@@ -103,7 +105,8 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
   }
 })();
 
-client.once('ready', () => {
+// Changed from 'ready' to 'clientReady'
+client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}!`);
 });
 
@@ -134,9 +137,9 @@ client.on('interactionCreate', async (interaction) => {
     console.error('Command error:', error);
     const errorMessage = 'An error occurred while executing this command!';
     if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({ content: errorMessage, ephemeral: true });
+      await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
     } else {
-      await interaction.reply({ content: errorMessage, ephemeral: true });
+      await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
     }
   }
 });
@@ -144,12 +147,17 @@ client.on('interactionCreate', async (interaction) => {
 async function handlePlay(interaction) {
   await interaction.deferReply();
 
-  const voiceChannel = interaction.member.voice.channel;
+  const voiceChannel = interaction.member?.voice?.channel;
   if (!voiceChannel) {
     return interaction.editReply('You need to be in a voice channel to play music!');
   }
 
   const query = interaction.options.getString('query');
+
+  if (!query) {
+    return interaction.editReply('Please provide a valid song URL or search term!');
+  }
+
   let songInfo;
 
   try {
@@ -166,15 +174,15 @@ async function handlePlay(interaction) {
       songInfo = await searchYouTube(query);
     }
 
-    if (!songInfo) {
-      return interaction.editReply('Could not get song information!');
+    if (!songInfo || !songInfo.url) {
+      return interaction.editReply('Could not find or get song information!');
     }
 
     const song = {
-      title: songInfo.title,
+      title: songInfo.title || 'Unknown Title',
       url: songInfo.url,
-      duration: songInfo.duration,
-      thumbnail: songInfo.thumbnail,
+      duration: songInfo.duration || 'Unknown',
+      thumbnail: songInfo.thumbnail || '',
       requestedBy: interaction.user.tag
     };
 
@@ -206,6 +214,8 @@ async function handlePlay(interaction) {
         queue.songs.shift();
         if (queue.songs.length > 0) {
           playSong(interaction.guild, queue.songs[0]);
+        } else {
+          queue.isPlaying = false;
         }
       });
     }
@@ -253,7 +263,10 @@ async function searchYouTube(query) {
       source: { youtube: 'video' }
     });
 
-    if (!searchResults || searchResults.length === 0) return null;
+    if (!searchResults || searchResults.length === 0) {
+      console.log('No search results found for:', query);
+      return null;
+    }
 
     const video = searchResults[0];
 
@@ -288,13 +301,34 @@ async function getYouTubeInfo(url) {
 
 async function playSong(guild, song) {
   const queue = queues.get(guild.id);
-  if (!queue || !song) return;
+
+  // Validate inputs
+  if (!queue) {
+    console.error('Queue not found for guild:', guild.id);
+    return;
+  }
+
+  if (!song || !song.url) {
+    console.error('Invalid song object:', song);
+    queue.songs.shift();
+    if (queue.songs.length > 0) {
+      playSong(guild, queue.songs[0]);
+    } else {
+      queue.isPlaying = false;
+    }
+    return;
+  }
 
   try {
     queue.isPlaying = true;
 
     // Use play-dl to stream audio
     const stream = await play.stream(song.url);
+
+    if (!stream || !stream.stream) {
+      throw new Error('Failed to create stream');
+    }
+
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type
     });
@@ -319,6 +353,8 @@ async function playSong(guild, song) {
     queue.songs.shift();
     if (queue.songs.length > 0) {
       playSong(guild, queue.songs[0]);
+    } else {
+      queue.isPlaying = false;
     }
   }
 }
@@ -326,7 +362,7 @@ async function playSong(guild, song) {
 async function handleSkip(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue || !queue.isPlaying) {
-    return interaction.reply({ content: 'Nothing is playing!', ephemeral: true });
+    return interaction.reply({ content: 'Nothing is playing!', flags: MessageFlags.Ephemeral });
   }
 
   queue.player.stop();
@@ -336,7 +372,7 @@ async function handleSkip(interaction) {
 async function handleStop(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue) {
-    return interaction.reply({ content: 'Nothing is playing!', ephemeral: true });
+    return interaction.reply({ content: 'Nothing is playing!', flags: MessageFlags.Ephemeral });
   }
 
   queue.songs = [];
@@ -349,7 +385,7 @@ async function handleStop(interaction) {
 async function handleQueue(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue || queue.songs.length === 0) {
-    return interaction.reply({ content: 'The queue is empty!', ephemeral: true });
+    return interaction.reply({ content: 'The queue is empty!', flags: MessageFlags.Ephemeral });
   }
 
   const embed = new EmbedBuilder()
@@ -372,7 +408,7 @@ async function handleQueue(interaction) {
 async function handleNowPlaying(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue || !queue.isPlaying || queue.songs.length === 0) {
-    return interaction.reply({ content: 'Nothing is playing!', ephemeral: true });
+    return interaction.reply({ content: 'Nothing is playing!', flags: MessageFlags.Ephemeral });
   }
 
   const song = queue.songs[0];
@@ -390,7 +426,7 @@ async function handleNowPlaying(interaction) {
 async function handlePause(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue || !queue.isPlaying) {
-    return interaction.reply({ content: 'Nothing is playing!', ephemeral: true });
+    return interaction.reply({ content: 'Nothing is playing!', flags: MessageFlags.Ephemeral });
   }
 
   queue.player.pause();
@@ -400,7 +436,7 @@ async function handlePause(interaction) {
 async function handleResume(interaction) {
   const queue = queues.get(interaction.guild.id);
   if (!queue) {
-    return interaction.reply({ content: 'Nothing is playing!', ephemeral: true });
+    return interaction.reply({ content: 'Nothing is playing!', flags: MessageFlags.Ephemeral });
   }
 
   queue.player.unpause();
@@ -427,6 +463,8 @@ async function handleHelp(interaction) {
 }
 
 function formatDuration(seconds) {
+  if (!seconds || isNaN(seconds)) return 'Unknown';
+
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
