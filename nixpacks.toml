@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs-20_x", "ffmpeg", "yt-dlp"]
+nixPkgs = ["nodejs-20_x", "ffmpeg", "youtube-dl"]
 
 [phases.install]
 cmds = ["npm install"]

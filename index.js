@@ -289,8 +289,8 @@ async function getYouTubeInfo(url) {
       throw new Error('Invalid YouTube URL');
     }
 
-    // Use yt-dlp to get video info
-    const { stdout } = await execAsync(`yt-dlp --dump-json "${url}"`);
+    // Use youtube-dl to get video info
+    const { stdout } = await execAsync(`youtube-dl --dump-json "${url}"`);
     const info = JSON.parse(stdout);
 
     return {
@@ -312,8 +312,8 @@ async function playSong(guild, song) {
   try {
     queue.isPlaying = true;
 
-    // Use yt-dlp to get stream URL
-    const { stdout } = await execAsync(`yt-dlp -f bestaudio -g "${song.url}"`);
+    // Use youtube-dl to get stream URL
+    const { stdout } = await execAsync(`youtube-dl -f bestaudio -g "${song.url}"`);
     const streamUrl = stdout.trim();
 
     // Create audio resource from the stream URL
