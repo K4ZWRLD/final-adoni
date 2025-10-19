@@ -305,24 +305,33 @@ async function getYouTubeInfo(url) {
     console.log('Getting YouTube info for URL:', url);
 
     // Validate the URL first
-    if (!play.yt_validate(url)) {
+    const validate = play.yt_validate(url);
+    console.log('URL validation result:', validate);
+
+    if (validate === false || validate === 'search') {
       console.error('Invalid YouTube URL:', url);
       return null;
     }
 
     const info = await play.video_info(url);
-    console.log('Video info received:', info);
+    console.log('Video info received. Keys:', Object.keys(info));
+    console.log('Video details keys:', info.video_details ? Object.keys(info.video_details) : 'no video_details');
 
     const video = info.video_details;
 
+    if (!video) {
+      console.error('No video_details in response');
+      return null;
+    }
+
     const songInfo = {
-      title: video.title,
-      url: video.url,
+      title: video.title || 'Unknown',
+      url: video.url || url, // Fallback to the original URL if video.url doesn't exist
       duration: formatDuration(video.durationInSec),
       thumbnail: video.thumbnails && video.thumbnails[0] ? video.thumbnails[0].url : ''
     };
 
-    console.log('Returning songInfo:', songInfo);
+    console.log('Returning songInfo:', JSON.stringify(songInfo, null, 2));
     return songInfo;
   } catch (error) {
     console.error('YouTube info error:', error);
