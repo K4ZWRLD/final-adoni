@@ -158,24 +158,32 @@ async function handlePlay(interaction) {
     return interaction.editReply('Please provide a valid song URL or search term!');
   }
 
+  console.log('Processing query:', query);
+
   let songInfo;
 
   try {
     // Check if it's a Spotify link
     if (query.includes('spotify.com')) {
+      console.log('Detected Spotify URL');
       songInfo = await handleSpotify(query);
     }
     // Check if it's a YouTube link
     else if (query.includes('youtube.com') || query.includes('youtu.be')) {
+      console.log('Detected YouTube URL');
       songInfo = await getYouTubeInfo(query);
     }
     // Otherwise, search YouTube
     else {
+      console.log('Searching YouTube for:', query);
       songInfo = await searchYouTube(query);
     }
 
+    console.log('Song info received:', JSON.stringify(songInfo, null, 2));
+
     if (!songInfo || !songInfo.url) {
-      return interaction.editReply('Could not find or get song information!');
+      console.error('Invalid songInfo:', songInfo);
+      return interaction.editReply('Could not find or get song information! The URL might be invalid or the video might be unavailable.');
     }
 
     const song = {
@@ -185,6 +193,8 @@ async function handlePlay(interaction) {
       thumbnail: songInfo.thumbnail || '',
       requestedBy: interaction.user.tag
     };
+
+    console.log('Created song object:', JSON.stringify(song, null, 2));
 
     let queue = queues.get(interaction.guild.id);
     if (!queue) {
@@ -237,7 +247,7 @@ async function handlePlay(interaction) {
     }
   } catch (error) {
     console.error('Play error:', error);
-    await interaction.editReply('An error occurred while trying to play the song!');
+    await interaction.editReply('An error occurred while trying to play the song: ' + error.message);
   }
 }
 
@@ -248,6 +258,7 @@ async function handleSpotify(url) {
     if (spotifyData.type === 'track') {
       // Search for the Spotify track on YouTube
       const searchQuery = `${spotifyData.name} ${spotifyData.artists[0].name}`;
+      console.log('Spotify track detected, searching YouTube for:', searchQuery);
       return await searchYouTube(searchQuery);
     }
   } catch (error) {
@@ -258,10 +269,13 @@ async function handleSpotify(url) {
 
 async function searchYouTube(query) {
   try {
+    console.log('Searching YouTube with query:', query);
     const searchResults = await play.search(query, {
       limit: 1,
       source: { youtube: 'video' }
     });
+
+    console.log('Search results:', searchResults);
 
     if (!searchResults || searchResults.length === 0) {
       console.log('No search results found for:', query);
@@ -269,13 +283,17 @@ async function searchYouTube(query) {
     }
 
     const video = searchResults[0];
+    console.log('Selected video:', video);
 
-    return {
+    const songInfo = {
       title: video.title,
       url: video.url,
       duration: formatDuration(video.durationInSec),
-      thumbnail: video.thumbnails[0]?.url || ''
+      thumbnail: video.thumbnails && video.thumbnails[0] ? video.thumbnails[0].url : ''
     };
+
+    console.log('Returning songInfo:', songInfo);
+    return songInfo;
   } catch (error) {
     console.error('YouTube search error:', error);
     return null;
@@ -284,15 +302,28 @@ async function searchYouTube(query) {
 
 async function getYouTubeInfo(url) {
   try {
+    console.log('Getting YouTube info for URL:', url);
+
+    // Validate the URL first
+    if (!play.yt_validate(url)) {
+      console.error('Invalid YouTube URL:', url);
+      return null;
+    }
+
     const info = await play.video_info(url);
+    console.log('Video info received:', info);
+
     const video = info.video_details;
 
-    return {
+    const songInfo = {
       title: video.title,
       url: video.url,
       duration: formatDuration(video.durationInSec),
-      thumbnail: video.thumbnails[0]?.url || ''
+      thumbnail: video.thumbnails && video.thumbnails[0] ? video.thumbnails[0].url : ''
     };
+
+    console.log('Returning songInfo:', songInfo);
+    return songInfo;
   } catch (error) {
     console.error('YouTube info error:', error);
     return null;
@@ -302,14 +333,27 @@ async function getYouTubeInfo(url) {
 async function playSong(guild, song) {
   const queue = queues.get(guild.id);
 
+  console.log('playSong called with song:', JSON.stringify(song, null, 2));
+
   // Validate inputs
   if (!queue) {
     console.error('Queue not found for guild:', guild.id);
     return;
   }
 
-  if (!song || !song.url) {
-    console.error('Invalid song object:', song);
+  if (!song) {
+    console.error('Song is null or undefined');
+    queue.songs.shift();
+    if (queue.songs.length > 0) {
+      playSong(guild, queue.songs[0]);
+    } else {
+      queue.isPlaying = false;
+    }
+    return;
+  }
+
+  if (!song.url) {
+    console.error('Song URL is missing. Full song object:', song);
     queue.songs.shift();
     if (queue.songs.length > 0) {
       playSong(guild, queue.songs[0]);
@@ -321,6 +365,8 @@ async function playSong(guild, song) {
 
   try {
     queue.isPlaying = true;
+
+    console.log('Attempting to stream from URL:', song.url);
 
     // Use play-dl to stream audio
     const stream = await play.stream(song.url);
