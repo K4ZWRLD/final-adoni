@@ -1,10 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const play = require('play-dl');
-const { google } = require('googleapis');
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execAsync = promisify(exec);
 const express = require('express');
 
 const app = express();
@@ -33,7 +29,6 @@ const client = new Client({
 // Configuration
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
 // Initialize play-dl for Spotify support
 play.setToken({
@@ -43,11 +38,6 @@ play.setToken({
     refresh_token: process.env.SPOTIFY_REFRESH_TOKEN,
     market: 'US'
   }
-});
-
-const youtube = google.youtube({
-  version: 'v3',
-  auth: YOUTUBE_API_KEY
 });
 
 // Queue system
@@ -173,11 +163,7 @@ async function handlePlay(interaction) {
     }
     // Otherwise, search YouTube
     else {
-      const searchResult = await searchYouTube(query);
-      if (!searchResult) {
-        return interaction.editReply('No results found!');
-      }
-      songInfo = await getYouTubeInfo(searchResult);
+      songInfo = await searchYouTube(query);
     }
 
     if (!songInfo) {
@@ -252,11 +238,7 @@ async function handleSpotify(url) {
     if (spotifyData.type === 'track') {
       // Search for the Spotify track on YouTube
       const searchQuery = `${spotifyData.name} ${spotifyData.artists[0].name}`;
-      const youtubeUrl = await searchYouTube(searchQuery);
-
-      if (!youtubeUrl) return null;
-
-      return await getYouTubeInfo(youtubeUrl);
+      return await searchYouTube(searchQuery);
     }
   } catch (error) {
     console.error('Spotify error:', error);
@@ -266,16 +248,21 @@ async function handleSpotify(url) {
 
 async function searchYouTube(query) {
   try {
-    const response = await youtube.search.list({
-      part: 'snippet',
-      q: query,
-      maxResults: 1,
-      type: 'video'
+    const searchResults = await play.search(query, {
+      limit: 1,
+      source: { youtube: 'video' }
     });
 
-    if (response.data.items.length === 0) return null;
+    if (!searchResults || searchResults.length === 0) return null;
 
-    return `https://www.youtube.com/watch?v=${response.data.items[0].id.videoId}`;
+    const video = searchResults[0];
+
+    return {
+      title: video.title,
+      url: video.url,
+      duration: formatDuration(video.durationInSec),
+      thumbnail: video.thumbnails[0]?.url || ''
+    };
   } catch (error) {
     console.error('YouTube search error:', error);
     return null;
@@ -284,20 +271,14 @@ async function searchYouTube(query) {
 
 async function getYouTubeInfo(url) {
   try {
-    // Validate URL format
-    if (!url || !url.includes('youtube.com') && !url.includes('youtu.be')) {
-      throw new Error('Invalid YouTube URL');
-    }
-
-    // Use youtube-dl to get video info
-    const { stdout } = await execAsync(`youtube-dl --dump-json "${url}"`);
-    const info = JSON.parse(stdout);
+    const info = await play.video_info(url);
+    const video = info.video_details;
 
     return {
-      title: info.title,
-      url: url,
-      duration: formatDuration(info.duration || 0),
-      thumbnail: info.thumbnail || info.thumbnails?.[0]?.url || ''
+      title: video.title,
+      url: video.url,
+      duration: formatDuration(video.durationInSec),
+      thumbnail: video.thumbnails[0]?.url || ''
     };
   } catch (error) {
     console.error('YouTube info error:', error);
@@ -312,14 +293,10 @@ async function playSong(guild, song) {
   try {
     queue.isPlaying = true;
 
-    // Use youtube-dl to get stream URL
-    const { stdout } = await execAsync(`youtube-dl -f bestaudio -g "${song.url}"`);
-    const streamUrl = stdout.trim();
-
-    // Create audio resource from the stream URL
-    const resource = createAudioResource(streamUrl, {
-      inputType: StreamType.Arbitrary,
-      inlineVolume: true
+    // Use play-dl to stream audio
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type
     });
 
     queue.player.play(resource);
